@@ -16,7 +16,6 @@ import verifyUtils from '../utils/verify-utils';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-/** ---------- 解析“原始收件人”工具函数 ---------- */
 function extractFirstEmail(s) {
   if (!s) return null;
   const angle = s.match(/<\s*([^>]+)\s*>/);
@@ -28,11 +27,10 @@ function extractFirstEmail(s) {
 function normalizeEmail(addr, dropPlus = true) {
   if (!addr) return null;
   let [local, domain] = addr.trim().toLowerCase().split('@');
-  if (dropPlus && local && local.includes('+')) local = local.split('+')[0];
+  if (dropPlus && local.includes('+')) local = local.split('+')[0];
   return `${local}@${domain}`;
 }
 
-/** 优先从转发保留的头里还原原始收件人；无则回退 To */
 function resolveRecipientFromHeaders(headers, fallbackTo) {
   const keys = [
     'x-original-to',
@@ -55,7 +53,6 @@ function resolveRecipientFromHeaders(headers, fallbackTo) {
   }
   return null;
 }
-/** -------------------------------------------------- */
 
 export async function email(message, env, ctx) {
   try {
