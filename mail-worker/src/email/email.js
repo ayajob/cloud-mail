@@ -1,130 +1,143 @@
-import PostalMime from 'postal-mime';
-import emailService from '../service/email-service';
-import accountService from '../service/account-service';
-import settingService from '../service/setting-service';
-import attService from '../service/att-service';
-import constant from '../const/constant';
-import fileUtils from '../utils/file-utils';
-import { emailConst, isDel, roleConst, settingConst } from '../const/entity-const';
-import emailUtils from '../utils/email-utils';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
-import timezone from 'dayjs/plugin/timezone';
-import roleService from '../service/role-service';
-import verifyUtils from '../utils/verify-utils';
+ import PostalMime from 'postal-mime';
+ import emailService from '../service/email-service';
+ import accountService from '../service/account-service';
+ import settingService from '../service/setting-service';
+ import attService from '../service/att-service';
+ import constant from '../const/constant';
+ import fileUtils from '../utils/file-utils';
+ import { emailConst, isDel, roleConst, settingConst } from '../const/entity-const';
+ import emailUtils from '../utils/email-utils';
+ import dayjs from 'dayjs';
+ import utc from 'dayjs/plugin/utc';
+ import timezone from 'dayjs/plugin/timezone';
+ import roleService from '../service/role-service';
+ import verifyUtils from '../utils/verify-utils';
 
-dayjs.extend(utc);
-dayjs.extend(timezone);
+ dayjs.extend(utc);
+ dayjs.extend(timezone);
 
-export async function email(message, env, ctx) {
++// -------- 新增：从头部优先解析“原始收件人” ----------
++function extractFirstEmail(s) {
++  const angle = s.match(/<\s*([^>]+)\s*>/);
++  if (angle && angle[1]) return angle[1].trim();
++  const m = s.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}/);
++  return m ? m[0] : null;
++}
++function normalizeEmail(addr, dropPlus = true) {
++  let [local, domain] = addr.trim().toLowerCase().split('@');
++  if (dropPlus && local.includes('+')) local = local.split('+')[0];
++  return `${local}@${domain}`;
++}
++function resolveRecipientFromHeaders(headers, fallbackTo) {
++  const keys = [
++    'x-original-to',
++    'original-recipient',
++    'delivered-to',
++    'envelope-to',
++    'x-receiver',
++    'x-forwarded-to',
++  ];
++  for (const k of keys) {
++    const v = headers.get(k);
++    if (v) {
++      const email = extractFirstEmail(v);
++      if (email) return normalizeEmail(email);
++    }
++  }
++  if (fallbackTo) {
++    const email = extractFirstEmail(fallbackTo);
++    if (email) return normalizeEmail(email);
++  }
++  return null;
++}
++// ----------------------------------------------------
 
-	try {
+ export async function email(message, env, ctx) {
 
-		const {
-			receive,
-			tgBotToken,
-			tgChatId,
-			tgBotStatus,
-			forwardStatus,
-			forwardEmail,
-			ruleEmail,
-			ruleType,
-			r2Domain,
-			noRecipient
-		} = await settingService.query({ env });
+ 	try {
 
-		if (receive === settingConst.receive.CLOSE) {
-			return;
-		}
+ 		const {
+ 			receive,
+ 			tgBotToken,
+ 			tgChatId,
+ 			tgBotStatus,
+ 			forwardStatus,
+ 			forwardEmail,
+ 			ruleEmail,
+ 			ruleType,
+ 			r2Domain,
+ 			noRecipient
+ 		} = await settingService.query({ env });
 
+ 		if (receive === settingConst.receive.CLOSE) {
+ 			return;
+ 		}
 
-		const reader = message.raw.getReader();
-		let content = '';
++		// 读取 raw 之前，先把“真正收件人”解析出来
++		const headers = message.headers; // Cloudflare EmailMessage Headers
++		const toHeader = headers.get('to');
++		const resolvedTo = resolveRecipientFromHeaders(headers, toHeader) || message.to;
 
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			content += new TextDecoder().decode(value);
-		}
+ 		const reader = message.raw.getReader();
+ 		let content = '';
 
-		const email = await PostalMime.parse(content);
+ 		while (true) {
+ 			const { done, value } = await reader.read();
+ 			if (done) break;
+ 			content += new TextDecoder().decode(value);
+ 		}
 
-		const account = await accountService.selectByEmailIncludeDel({ env: env }, message.to);
+ 		const email = await PostalMime.parse(content);
 
-		if (!account && noRecipient === settingConst.noRecipient.CLOSE) {
-			return;
-		}
+-		const account = await accountService.selectByEmailIncludeDel({ env: env }, message.to);
++		// 用解析后的收件人匹配账号（支持 bbb.com）
++		const account = await accountService.selectByEmailIncludeDel({ env: env }, resolvedTo);
 
-		if (account && account.email !== env.admin) {
+ 		if (!account && noRecipient === settingConst.noRecipient.CLOSE) {
+ 			return;
+ 		}
 
-			let { banEmail, banEmailType, availDomain } = await roleService.selectByUserId({ env: env }, account.userId);
+ 		if (account && account.email !== env.admin) {
 
-			if(!roleService.hasAvailDomainPerm(availDomain, message.to)) {
-				return;
-			}
+ 			let { banEmail, banEmailType, availDomain } = await roleService.selectByUserId({ env: env }, account.userId);
 
-			banEmail = banEmail.split(',').filter(item => item !== '');
+-			if(!roleService.hasAvailDomainPerm(availDomain, message.to)) {
++			if(!roleService.hasAvailDomainPerm(availDomain, resolvedTo)) {
+ 				return;
+ 			}
 
-			for (const item of banEmail) {
+ 			banEmail = banEmail.split(',').filter(item => item !== '');
 
-				if (verifyUtils.isDomain(item)) {
+ 			for (const item of banEmail) {
+        ...
+ 			}
 
-					const banDomain = item.toLowerCase();
-					const receiveDomain = emailUtils.getDomain(email.from.address.toLowerCase());
+ 		}
 
-					if (banDomain === receiveDomain) {
+-		const toName = email.to.find(item => item.address === message.to)?.name || '';
++		// 在解析后的收件人上找显示名（email.to 里可能有多收件人）
++		const toName = (email.to?.find?.(i => (i.address || '').toLowerCase() === resolvedTo) || {}).name || '';
 
-						if (banEmailType === roleConst.banEmailType.ALL) return;
-
-						if (banEmailType === roleConst.banEmailType.CONTENT) {
-							email.html = 'The content has been deleted';
-							email.text = 'The content has been deleted';
-							email.attachments = [];
-						}
-
-					}
-
-				} else {
-
-					if (item.toLowerCase() === email.from.address.toLowerCase()) {
-
-						if (banEmailType === roleConst.banEmailType.ALL) return;
-
-						if (banEmailType === roleConst.banEmailType.CONTENT) {
-							email.html = 'The content has been deleted';
-							email.text = 'The content has been deleted';
-							email.attachments = [];
-						}
-
-					}
-
-				}
-
-			}
-
-		}
-
-		const toName = email.to.find(item => item.address === message.to)?.name || '';
-
-		const params = {
-			toEmail: message.to,
-			toName: toName,
-			sendEmail: email.from.address,
-			name: email.from.name || emailUtils.getName(email.from.address),
-			subject: email.subject,
-			content: email.html,
-			text: email.text,
-			cc: email.cc ? JSON.stringify(email.cc) : '[]',
-			bcc: email.bcc ? JSON.stringify(email.bcc) : '[]',
-			recipient: JSON.stringify(email.to),
-			inReplyTo: email.inReplyTo,
-			relation: email.references,
-			messageId: email.messageId,
-			userId: account ? account.userId : 0,
-			accountId: account ? account.accountId : 0,
-			isDel: isDel.DELETE,
-			status: emailConst.status.SAVING
-		};
+ 		const params = {
+-			toEmail: message.to,
++			toEmail: resolvedTo,
+ 			toName: toName,
+ 			sendEmail: email.from.address,
+ 			name: email.from.name || emailUtils.getName(email.from.address),
+ 			subject: email.subject,
+ 			content: email.html,
+ 			text: email.text,
+ 			cc: email.cc ? JSON.stringify(email.cc) : '[]',
+ 			bcc: email.bcc ? JSON.stringify(email.bcc) : '[]',
+ 			recipient: JSON.stringify(email.to),
+ 			inReplyTo: email.inReplyTo,
+ 			relation: email.references,
+ 			messageId: email.messageId,
+ 			userId: account ? account.userId : 0,
+ 			accountId: account ? account.accountId : 0,
+ 			isDel: isDel.DELETE,
+ 			status: emailConst.status.SAVING
+ 		};
 
 		const attachments = [];
 		const cidAttachments = [];
@@ -151,31 +164,28 @@ export async function email(message, env, ctx) {
 			await attService.addAtt({ env }, attachments);
 		}
 
-		emailRow = await emailService.completeReceive({ env }, account ? emailConst.status.RECEIVE : emailConst.status.NOONE, emailRow.emailId);
+ 		emailRow = await emailService.completeReceive({ env }, account ? emailConst.status.RECEIVE : emailConst.status.NOONE, emailRow.emailId);
 
+ 		if (ruleType === settingConst.ruleType.RULE) {
+ 			const emails = ruleEmail.split(',');
+-			if (!emails.includes(message.to)) {
++			if (!emails.includes(resolvedTo)) {
+ 				return;
+ 			}
+ 		}
 
-		if (ruleType === settingConst.ruleType.RULE) {
+ 		if (tgBotStatus === settingConst.tgBotStatus.OPEN && tgChatId) {
 
-			const emails = ruleEmail.split(',');
+ 			const tgMessage = `<b>${params.subject}</b>
 
-			if (!emails.includes(message.to)) {
-				return;
-			}
+ <b>发件人：</b>${params.name}		&lt;${params.sendEmail}&gt;
+-<b>收件人：\u200B</b>${message.to}
++<b>收件人：\u200B</b>${resolvedTo}
+ <b>时间：</b>${dayjs.utc(emailRow.createTime).tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')}
 
-		}
-
-
-		if (tgBotStatus === settingConst.tgBotStatus.OPEN && tgChatId) {
-
-			const tgMessage = `<b>${params.subject}</b>
-
-<b>发件人：</b>${params.name}		&lt;${params.sendEmail}&gt;
-<b>收件人：\u200B</b>${message.to}
-<b>时间：</b>${dayjs.utc(emailRow.createTime).tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')}
-
-${params.text || emailUtils.htmlToText(params.content) || ''}
-`;
-
+ ${params.text || emailUtils.htmlToText(params.content) || ''}
+ `;
+			
 			const tgChatIds = tgChatId.split(',');
 
 			await Promise.all(tgChatIds.map(async chatId => {
