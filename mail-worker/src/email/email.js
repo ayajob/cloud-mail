@@ -16,41 +16,41 @@
  dayjs.extend(utc);
  dayjs.extend(timezone);
 
-+// -------- 新增：从头部优先解析“原始收件人” ----------
-+function extractFirstEmail(s) {
-+  const angle = s.match(/<\s*([^>]+)\s*>/);
-+  if (angle && angle[1]) return angle[1].trim();
-+  const m = s.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}/);
-+  return m ? m[0] : null;
-+}
-+function normalizeEmail(addr, dropPlus = true) {
-+  let [local, domain] = addr.trim().toLowerCase().split('@');
-+  if (dropPlus && local.includes('+')) local = local.split('+')[0];
-+  return `${local}@${domain}`;
-+}
-+function resolveRecipientFromHeaders(headers, fallbackTo) {
-+  const keys = [
-+    'x-original-to',
-+    'original-recipient',
-+    'delivered-to',
-+    'envelope-to',
-+    'x-receiver',
-+    'x-forwarded-to',
-+  ];
-+  for (const k of keys) {
-+    const v = headers.get(k);
-+    if (v) {
-+      const email = extractFirstEmail(v);
-+      if (email) return normalizeEmail(email);
-+    }
-+  }
-+  if (fallbackTo) {
-+    const email = extractFirstEmail(fallbackTo);
-+    if (email) return normalizeEmail(email);
-+  }
-+  return null;
-+}
-+// ----------------------------------------------------
+function extractFirstEmail(s) {
+  const angle = s.match(/<\s*([^>]+)\s*>/);
+  if (angle && angle[1]) return angle[1].trim();
+  const m = s.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}/);
+  return m ? m[0] : null;
+}
+
+function normalizeEmail(addr, dropPlus = true) {
+  let [local, domain] = addr.trim().toLowerCase().split('@');
+  if (dropPlus && local.includes('+')) local = local.split('+')[0];
+  return `${local}@${domain}`;
+}
+
+function resolveRecipientFromHeaders(headers, fallbackTo) {
+  const keys = [
+    'x-original-to',
+    'original-recipient',
+    'delivered-to',
+    'envelope-to',
+    'x-receiver',
+    'x-forwarded-to',
+  ];
+  for (const k of keys) {
+    const v = headers.get(k);
+    if (v) {
+      const email = extractFirstEmail(v);
+      if (email) return normalizeEmail(email);
+    }
+  }
+  if (fallbackTo) {
+    const email = extractFirstEmail(fallbackTo);
+    if (email) return normalizeEmail(email);
+  }
+  return null;
+}
 
  export async function email(message, env, ctx) {
 
@@ -73,10 +73,9 @@
  			return;
  		}
 
-+		// 读取 raw 之前，先把“真正收件人”解析出来
-+		const headers = message.headers; // Cloudflare EmailMessage Headers
-+		const toHeader = headers.get('to');
-+		const resolvedTo = resolveRecipientFromHeaders(headers, toHeader) || message.to;
+const headers = message.headers;
+const toHeader = headers.get('to');
+const resolvedTo = resolveRecipientFromHeaders(headers, toHeader) || message.to;
 
  		const reader = message.raw.getReader();
  		let content = '';
