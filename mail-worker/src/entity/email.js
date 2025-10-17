@@ -22,6 +22,7 @@ export const email = sqliteTable('email', {
 	resendEmailId: text('resend_email_id'),
 	message: text('message'),
 	createTime: text('create_time').default(sql`CURRENT_TIMESTAMP`).notNull(),
-	isDel: integer('is_del').default(0).notNull()
+	isDel: integer('is_del').default(0).notNull(),
+	prefix: text('prefix').default('').notNull() // For catch-all prefix filtering
 });
 export default email
