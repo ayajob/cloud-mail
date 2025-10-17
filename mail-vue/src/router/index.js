@@ -58,6 +58,16 @@ const routes = [
         component: () => import('@/views/login/index.vue')
     },
     {
+        path: '/prefix/:prefix',
+        name: 'prefix-access',
+        component: () => import('@/views/prefix-access/index.vue'),
+        meta: {
+            title: 'prefix-access',
+            name: 'prefix-access',
+            menu: false
+        }
+    },
+    {
         path: '/test',
         name: 'test',
         component: () => import('@/views/test/index.vue')
