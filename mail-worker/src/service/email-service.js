@@ -126,6 +126,17 @@ const emailService = {
 		return orm(c).insert(email).values({ ...params }).returning().get();
 	},
 
+	// New method for catch-all email receiving
+	receiveCatchAll(c, params, cidAttList, r2domain) {
+		params.content = this.imgReplace(params.content, cidAttList, r2domain)
+		// Extract prefix from toEmail for indexing
+		if (params.toEmail) {
+			const [local] = params.toEmail.toLowerCase().split('@');
+			params.prefix = local || '';
+		}
+		return orm(c).insert(email).values({ ...params }).returning().get();
+	},
+
 	async send(c, params, userId) {
 
 		let { accountId, name, sendType, emailId, receiveEmail, manyType, text, content, subject, attachments } = params;

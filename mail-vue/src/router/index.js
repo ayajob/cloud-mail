@@ -49,6 +49,16 @@ const routes = [
                     menu: true
                 }
             },
+            {
+                path: '/prefix-admin',
+                name: 'prefix-admin',
+                component: () => import('@/views/PrefixAdmin.vue'),
+                meta: {
+                    title: 'Prefix Management',
+                    name: 'prefix-admin',
+                    menu: true
+                }
+            },
         ]
 
     },
@@ -61,6 +71,16 @@ const routes = [
         path: '/test',
         name: 'test',
         component: () => import('@/views/test/index.vue')
+    },
+    {
+        path: '/prefix-login',
+        name: 'prefix-login',
+        component: () => import('@/views/PrefixLogin.vue')
+    },
+    {
+        path: '/prefix-emails',
+        name: 'prefix-emails',
+        component: () => import('@/views/PrefixEmails.vue')
     },
     {
         path: '/:pathMatch(.*)*',
