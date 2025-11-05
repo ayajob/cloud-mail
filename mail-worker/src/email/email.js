@@ -1,3 +1,5 @@
+// mail-worker/src/email/email.js
+
 import PostalMime from 'postal-mime';
 import emailService from '../service/email-service';
 import accountService from '../service/account-service';
@@ -31,7 +33,10 @@ function normalizeEmail(addr, dropPlus = true) {
   return `${local}@${domain}`;
 }
 
-function resolveRecipientFromHeaders(headers, fallbackTo) {
+// ========== 修改这个函数,添加更多日志和 fallback 选项 ==========
+function resolveRecipientFromHeaders(headers, fallbackTo, parsedEmailTo) {
+  console.log('=== 开始解析原始收件人 ===');
+  
   const keys = [
     'x-original-to',
     'original-recipient',
@@ -40,17 +45,44 @@ function resolveRecipientFromHeaders(headers, fallbackTo) {
     'x-receiver',
     'x-forwarded-to',
   ];
+  
+  // 尝试从各个头部字段获取
   for (const k of keys) {
     const v = headers.get(k);
     if (v) {
+      console.log(`找到头部 ${k}: ${v}`);
       const em = extractFirstEmail(v);
-      if (em) return normalizeEmail(em);
+      if (em) {
+        const normalized = normalizeEmail(em);
+        console.log(`从 ${k} 解析出收件人: ${normalized}`);
+        return normalized;
+      }
     }
   }
-  if (fallbackTo) {
-    const em = extractFirstEmail(fallbackTo);
-    if (em) return normalizeEmail(em);
+  
+  // 尝试从 PostalMime 解析的 email.to 数组中获取
+  if (parsedEmailTo && Array.isArray(parsedEmailTo) && parsedEmailTo.length > 0) {
+    for (const recipient of parsedEmailTo) {
+      if (recipient.address) {
+        const normalized = normalizeEmail(recipient.address);
+        console.log(`从 email.to 数组解析出收件人: ${normalized}`);
+        return normalized;
+      }
+    }
   }
+  
+  // 尝试从 To 头部获取
+  if (fallbackTo) {
+    console.log(`使用 To 头部: ${fallbackTo}`);
+    const em = extractFirstEmail(fallbackTo);
+    if (em) {
+      const normalized = normalizeEmail(em);
+      console.log(`从 To 头部解析出收件人: ${normalized}`);
+      return normalized;
+    }
+  }
+  
+  console.log('未能解析出原始收件人');
   return null;
 }
 
@@ -73,11 +105,11 @@ export async function email(message, env, ctx) {
       return;
     }
 
-    // 解析“真正的收件人”（支持转发保留头）
-    const headers = message.headers;
-    const toHeader = headers.get('to');
-    const resolvedTo = resolveRecipientFromHeaders(headers, toHeader) || message.to;
-
+    // ========== 添加调试日志 ==========
+    console.log('=== 邮件接收调试信息 ===');
+    console.log('message.from:', message.from);
+    console.log('message.to (可能是转发地址):', message.to);
+    
     // 读取原始邮件并解析
     const reader = message.raw.getReader();
     let content = '';
@@ -87,6 +119,19 @@ export async function email(message, env, ctx) {
       content += new TextDecoder().decode(value);
     }
     const email = await PostalMime.parse(content);
+
+    // ========== 打印 PostalMime 解析的收件人信息 ==========
+    console.log('PostalMime 解析的 email.to:', JSON.stringify(email.to));
+    
+    // 解析"真正的收件人"（支持转发保留头）
+    const headers = message.headers;
+    const toHeader = headers.get('to');
+    
+    // ========== 关键修改:传入 email.to 作为额外的 fallback ==========
+    const resolvedTo = resolveRecipientFromHeaders(headers, toHeader, email.to) || message.to;
+    
+    console.log('最终确定的收件人:', resolvedTo);
+    console.log('======================');
 
     // 用解析后的收件人匹配账号
     const account = await accountService.selectByEmailIncludeDel({ env: env }, resolvedTo);
@@ -135,7 +180,7 @@ export async function email(message, env, ctx) {
       (email.to?.find?.(i => (i.address || '').toLowerCase() === resolvedTo)?.name) || '';
 
     const params = {
-      toEmail: resolvedTo,
+      toEmail: resolvedTo,  // 这里存储的应该是原始收件人
       toName: toName,
       sendEmail: email.from.address,
       name: email.from.name || emailUtils.getName(email.from.address),
