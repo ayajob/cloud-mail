@@ -43,24 +43,33 @@ function resolveRecipientFromHeaders(headers, fallbackTo, parsedEmailTo) {
     'x-forwarded-to',
   ];
   
-  // 尝试从各个头部字段获取
-  for (const k of keys) {
-    const v = headers.get(k);
-    if (v) {
-      console.log(`找到头部 ${k}: ${v}`);
-      const em = extractFirstEmail(v);
-      if (em) {
-        const normalized = normalizeEmail(em);
-        console.log(`从 ${k} 解析出收件人: ${normalized}`);
-        return normalized;
+  // 检查 headers 是否有效
+  if (headers && typeof headers.get === 'function') {
+    // 尝试从各个头部字段获取
+    for (const k of keys) {
+      try {
+        const v = headers.get(k);
+        if (v) {
+          console.log(`找到头部 ${k}: ${v}`);
+          const em = extractFirstEmail(v);
+          if (em) {
+            const normalized = normalizeEmail(em);
+            console.log(`从 ${k} 解析出收件人: ${normalized}`);
+            return normalized;
+          }
+        }
+      } catch (e) {
+        console.error(`读取头部 ${k} 失败:`, e);
       }
     }
+  } else {
+    console.log('headers 对象无效或没有 get 方法');
   }
   
   // 尝试从 PostalMime 解析的 email.to 数组中获取
   if (parsedEmailTo && Array.isArray(parsedEmailTo) && parsedEmailTo.length > 0) {
     for (const recipient of parsedEmailTo) {
-      if (recipient.address) {
+      if (recipient && recipient.address) {
         const normalized = normalizeEmail(recipient.address);
         console.log(`从 email.to 数组解析出收件人: ${normalized}`);
         return normalized;
@@ -105,7 +114,9 @@ export async function email(message, env, ctx) {
     // 添加调试日志
     console.log('=== 邮件接收调试信息 ===');
     console.log('message.from:', message.from);
-    console.log('message.to (可能是转发地址):', message.to);
+    console.log('message.to:', message.to);
+    console.log('message.headers 类型:', typeof message.headers);
+    console.log('message.headers 存在:', !!message.headers);
 
     // 读取原始邮件并解析
     const reader = message.raw.getReader();
@@ -120,9 +131,20 @@ export async function email(message, env, ctx) {
     // 打印 PostalMime 解析的收件人信息
     console.log('PostalMime 解析的 email.to:', JSON.stringify(email.to));
 
+    // 安全地获取 headers 和 toHeader
+    const headers = message.headers || null;
+    let toHeader = null;
+    
+    if (headers && typeof headers.get === 'function') {
+      try {
+        toHeader = headers.get('to');
+        console.log('To 头部:', toHeader);
+      } catch (e) {
+        console.error('获取 To 头部失败:', e);
+      }
+    }
+
     // 解析"真正的收件人"（支持转发保留头）
-    const headers = message.headers;
-    const toHeader = headers.get('to');
     const resolvedTo = resolveRecipientFromHeaders(headers, toHeader, email.to) || message.to;
 
     console.log('最终确定的收件人:', resolvedTo);
@@ -283,5 +305,6 @@ ${params.text || emailUtils.htmlToText(params.content) || ''}
     }
   } catch (e) {
     console.error('邮件接收异常: ', e);
+    console.error('错误堆栈:', e.stack);
   }
 }
