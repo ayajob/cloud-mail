@@ -31,7 +31,6 @@ function normalizeEmail(addr, dropPlus = true) {
   return `${local}@${domain}`;
 }
 
-// ========== 修改这个函数,添加更多日志和 fallback 选项 ==========
 function resolveRecipientFromHeaders(headers, fallbackTo, parsedEmailTo) {
   console.log('=== 开始解析原始收件人 ===');
   
@@ -103,11 +102,11 @@ export async function email(message, env, ctx) {
       return;
     }
 
-    // ========== 添加调试日志 ==========
+    // 添加调试日志
     console.log('=== 邮件接收调试信息 ===');
     console.log('message.from:', message.from);
     console.log('message.to (可能是转发地址):', message.to);
-    
+
     // 读取原始邮件并解析
     const reader = message.raw.getReader();
     let content = '';
@@ -118,16 +117,14 @@ export async function email(message, env, ctx) {
     }
     const email = await PostalMime.parse(content);
 
-    // ========== 打印 PostalMime 解析的收件人信息 ==========
+    // 打印 PostalMime 解析的收件人信息
     console.log('PostalMime 解析的 email.to:', JSON.stringify(email.to));
-    
+
     // 解析"真正的收件人"（支持转发保留头）
     const headers = message.headers;
     const toHeader = headers.get('to');
-    
-    // ========== 关键修改:传入 email.to 作为额外的 fallback ==========
     const resolvedTo = resolveRecipientFromHeaders(headers, toHeader, email.to) || message.to;
-    
+
     console.log('最终确定的收件人:', resolvedTo);
     console.log('======================');
 
@@ -178,7 +175,7 @@ export async function email(message, env, ctx) {
       (email.to?.find?.(i => (i.address || '').toLowerCase() === resolvedTo)?.name) || '';
 
     const params = {
-      toEmail: resolvedTo,  // 这里存储的应该是原始收件人
+      toEmail: resolvedTo,
       toName: toName,
       sendEmail: email.from.address,
       name: email.from.name || emailUtils.getName(email.from.address),
