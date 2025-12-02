@@ -3,6 +3,7 @@ import emailService from '../service/email-service';
 import accountService from '../service/account-service';
 import settingService from '../service/setting-service';
 import attService from '../service/att-service';
+import imapService from '../service/imap-service';
 import constant from '../const/constant';
 import fileUtils from '../utils/file-utils';
 import { emailConst, isDel, roleConst, settingConst } from '../const/entity-const';
@@ -85,6 +86,12 @@ function resolveRecipientFromHeaders(headers, fallbackTo, parsedEmailTo) {
 }
 
 export async function email(message, env, ctx) {
+  // Use the new IMAP service for catch-all email processing
+  return await imapService.processIncomingEmail(message, env, ctx);
+}
+
+// Keep the original function as backup/reference
+export async function emailOriginal(message, env, ctx) {
   try {
     const {
       receive,
