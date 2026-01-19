@@ -3,6 +3,9 @@
 // 并在 mail-worker/src/hono/webs.js 中添加 import '../api/forward-api';
 
 import app from '../hono/hono';
+import emailService from '../service/email-service';
+import accountService from '../service/account-service';
+import { emailConst, isDel } from '../const/entity-const';
 
 // JWT 验证
 async function verifyJwtToken(authHeader, jwtSecret) {
@@ -54,6 +57,25 @@ async function verifyJwtToken(authHeader, jwtSecret) {
     }
 }
 
+// 从邮件地址中提取名称
+function extractName(emailStr) {
+    if (!emailStr) return '';
+    const match = emailStr.match(/^([^<]+)\s*</);
+    if (match) return match[1].trim();
+    const atIndex = emailStr.indexOf('@');
+    if (atIndex > 0) return emailStr.substring(0, atIndex);
+    return emailStr;
+}
+
+// 从邮件地址中提取纯邮箱
+function extractEmail(emailStr) {
+    if (!emailStr) return '';
+    const match = emailStr.match(/<([^>]+)>/);
+    if (match) return match[1].trim().toLowerCase();
+    const emailMatch = emailStr.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}/);
+    return emailMatch ? emailMatch[0].toLowerCase() : emailStr.toLowerCase();
+}
+
 // 接收转发的邮件
 app.post('/forward/receive', async (c) => {
     const env = c.env;
@@ -75,96 +97,54 @@ app.post('/forward/receive', async (c) => {
             return c.json({ error: 'Missing required fields', code: 400 }, 400);
         }
 
-        // 生成唯一 ID
-        const emailId = crypto.randomUUID();
-        const now = new Date().toISOString();
+        // 解析收件人邮箱
+        const toEmail = extractEmail(emailData.to);
+        const sendEmail = extractEmail(emailData.from);
+        const senderName = extractName(emailData.from);
 
-        // 存储到 D1 数据库
-        // 根据你的 emailDao 结构调整
-        const db = env.DB;
-        if (db) {
-            await db.prepare(`
-        INSERT INTO emails (
-          id, sender, recipient, subject, 
-          body_text, body_html, message_id, 
-          received_at, account, raw_email, source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-                emailId,
-                emailData.from || '',
-                emailData.to || '',
-                emailData.subject || '',
-                emailData.body_text || '',
-                emailData.body_html || '',
-                emailData.message_id || '',
-                now,
-                emailData.account || '',
-                emailData.raw || '',
-                'forwarded'  // 标记为转发邮件
-            ).run();
+        // 查找账号
+        let account = null;
+        try {
+            account = await accountService.selectByEmailIncludeDel({ env }, toEmail);
+        } catch (e) {
+            console.log('Account not found for:', toEmail);
         }
 
-        // 存储到 KV（可选）
-        const kv = env.KV;
-        if (kv) {
-            const kvData = {
-                id: emailId,
-                from: emailData.from,
-                to: emailData.to,
-                subject: emailData.subject,
-                date: emailData.date,
-                received_at: now,
-                account: emailData.account,
-                source: 'forwarded'
-            };
-            await kv.put(`forward:${emailId}`, JSON.stringify(kvData), {
-                expirationTtl: 60 * 60 * 24 * 30 // 30天过期
-            });
-        }
+        // 构造邮件参数（与 email.js 中的格式一致）
+        const params = {
+            toEmail: toEmail,
+            toName: extractName(emailData.to),
+            sendEmail: sendEmail,
+            name: senderName,
+            subject: emailData.subject,
+            content: emailData.body_html || '',
+            text: emailData.body_text || '',
+            cc: '[]',
+            bcc: '[]',
+            recipient: JSON.stringify([{ address: toEmail, name: extractName(emailData.to) }]),
+            inReplyTo: '',
+            relation: '',
+            messageId: emailData.message_id || '',
+            userId: account ? account.userId : 0,
+            accountId: account ? account.accountId : 0,
+            isDel: isDel.NORMAL,  // 使用 NORMAL 而不是 DELETE，这样邮件会立即显示
+            status: emailConst.status.RECEIVE,
+            type: emailConst.type.RECEIVE
+        };
 
-        console.log(`Forwarded email received: ${emailData.subject}`);
+        // 使用 emailService 保存邮件
+        const emailRow = await emailService.receive({ env }, params, [], env.r2Domain || '');
+
+        console.log(`Forwarded email saved: ${emailData.subject}, emailId: ${emailRow.emailId}`);
 
         return c.json({
             success: true,
-            id: emailId,
+            id: emailRow.emailId,
             message: 'Email received successfully'
         });
 
     } catch (e) {
         console.error('Error processing forwarded email:', e);
-        return c.json({ error: e.message, code: 500 }, 500);
-    }
-});
-
-// 获取转发的邮件列表
-app.get('/forward/list', async (c) => {
-    const env = c.env;
-
-    // 兼容不同版本的 Hono
-    const url = new URL(c.req.url);
-    const limit = parseInt(url.searchParams.get('limit') || '50');
-    const offset = parseInt(url.searchParams.get('offset') || '0');
-
-    try {
-        const db = env.DB;
-        if (!db) {
-            return c.json({ emails: [], total: 0 });
-        }
-
-        const result = await db.prepare(`
-      SELECT id, sender, recipient, subject, received_at, account
-      FROM emails
-      WHERE source = 'forwarded'
-      ORDER BY received_at DESC
-      LIMIT ? OFFSET ?
-    `).bind(limit, offset).all();
-
-        return c.json({
-            emails: result.results,
-            total: result.results.length
-        });
-
-    } catch (e) {
         return c.json({ error: e.message, code: 500 }, 500);
     }
 });
