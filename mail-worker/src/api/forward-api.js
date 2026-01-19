@@ -3,7 +3,6 @@
 // 并在 mail-worker/src/hono/webs.js 中添加 import '../api/forward-api';
 
 import app from '../hono/hono';
-import emailDao from '../dao/email-dao';
 
 // JWT 验证
 async function verifyJwtToken(authHeader, jwtSecret) {
