@@ -139,8 +139,11 @@ app.post('/forward/receive', async (c) => {
 // 获取转发的邮件列表
 app.get('/forward/list', async (c) => {
     const env = c.env;
-    const limit = parseInt(c.req.query('limit') || '50');
-    const offset = parseInt(c.req.query('offset') || '0');
+
+    // 兼容不同版本的 Hono
+    const url = new URL(c.req.url);
+    const limit = parseInt(url.searchParams.get('limit') || '50');
+    const offset = parseInt(url.searchParams.get('offset') || '0');
 
     try {
         const db = env.DB;
