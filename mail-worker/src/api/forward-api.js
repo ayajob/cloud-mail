@@ -7,9 +7,10 @@ import emailService from '../service/email-service';
 import accountService from '../service/account-service';
 import { emailConst, isDel } from '../const/entity-const';
 
-// JWT 验证
+// JWT 验证 - 使用简化版本，只验证签名
 async function verifyJwtToken(authHeader, jwtSecret) {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        console.log('No valid Authorization header');
         return false;
     }
 
@@ -17,8 +18,31 @@ async function verifyJwtToken(authHeader, jwtSecret) {
 
     try {
         const parts = token.split('.');
-        if (parts.length !== 3) return false;
+        if (parts.length !== 3) {
+            console.log('Invalid JWT format');
+            return false;
+        }
 
+        // Base64URL 解码函数
+        function base64UrlDecode(str) {
+            // 替换 URL 安全字符
+            str = str.replace(/-/g, '+').replace(/_/g, '/');
+            // 添加填充
+            const pad = str.length % 4;
+            if (pad) {
+                if (pad === 1) throw new Error('Invalid base64 string');
+                str += new Array(5 - pad).join('=');
+            }
+            // 解码
+            const binary = atob(str);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes;
+        }
+
+        // 验证签名
         const encoder = new TextEncoder();
         const key = await crypto.subtle.importKey(
             'raw',
@@ -28,31 +52,34 @@ async function verifyJwtToken(authHeader, jwtSecret) {
             ['verify']
         );
 
-        // Base64URL 解码
-        const base64UrlDecode = (str) => {
-            str = str.replace(/-/g, '+').replace(/_/g, '/');
-            while (str.length % 4) str += '=';
-            return Uint8Array.from(atob(str), c => c.charCodeAt(0));
-        };
+        const signatureBytes = base64UrlDecode(parts[2]);
+        const dataToVerify = encoder.encode(parts[0] + '.' + parts[1]);
 
         const signatureValid = await crypto.subtle.verify(
             'HMAC',
             key,
-            base64UrlDecode(parts[2]),
-            encoder.encode(parts[0] + '.' + parts[1])
+            signatureBytes,
+            dataToVerify
         );
 
-        if (!signatureValid) return false;
-
-        // 检查过期时间
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-        if (payload.exp && payload.exp < Date.now() / 1000) {
+        if (!signatureValid) {
+            console.log('JWT signature verification failed');
             return false;
         }
 
+        // 解析 payload 检查过期时间
+        const payloadStr = new TextDecoder().decode(base64UrlDecode(parts[1]));
+        const payload = JSON.parse(payloadStr);
+
+        if (payload.exp && payload.exp < Date.now() / 1000) {
+            console.log('JWT expired');
+            return false;
+        }
+
+        console.log('JWT verification successful');
         return true;
     } catch (e) {
-        console.error('JWT verification failed:', e);
+        console.error('JWT verification error:', e.message);
         return false;
     }
 }
