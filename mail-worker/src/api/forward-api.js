@@ -97,15 +97,19 @@ app.post('/forward/receive', async (c) => {
             return c.json({ error: 'Missing required fields', code: 400 }, 400);
         }
 
-        // 解析收件人邮箱
-        const toEmail = extractEmail(emailData.to);
+        // 优先使用 original_recipient（原始收件人，转发前的地址）
+        // 如果没有，则使用 to 字段
+        const toEmail = emailData.original_recipient || extractEmail(emailData.to);
         const sendEmail = extractEmail(emailData.from);
         const senderName = extractName(emailData.from);
 
-        // 查找账号
+        console.log(`Processing email for recipient: ${toEmail}, from: ${sendEmail}`);
+
+        // 查找账号（根据原始收件人查找）
         let account = null;
         try {
             account = await accountService.selectByEmailIncludeDel({ env }, toEmail);
+            console.log(`Found account for ${toEmail}: userId=${account?.userId}, accountId=${account?.accountId}`);
         } catch (e) {
             console.log('Account not found for:', toEmail);
         }
