@@ -3,6 +3,7 @@ import { email } from './email/email';
 import userService from './service/user-service';
 import verifyRecord from './entity/verify-record';
 import verifyRecordService from './service/verify-record-service';
+import imapService from './service/imap-service';
 export default {
 	 async fetch(req, env, ctx) {
 		const url = new URL(req.url)
@@ -20,5 +21,11 @@ export default {
 	async scheduled(c, env, ctx) {
 		await verifyRecordService.clearRecord({env})
 		await userService.resetDaySendCount({ env })
+		// Fetch emails from IMAP server every 5 minutes
+		try {
+			await imapService.fetchEmails({env})
+		} catch (error) {
+			console.error('Scheduled IMAP fetch error:', error)
+		}
 	},
 };
